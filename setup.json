@@ -1,0 +1,38 @@
+{
+    "version": "0.1.dev1",
+    "name": "aiida-tb2j",
+    "keywords": ["aiida", "tb2j"],
+    "description": "A plugin to use the TB2J code within the AiiDA framework.",
+    "classifiers": [
+	"Programming Language :: Python :: 3.8",
+	"Programming Language :: Python :: 3.9",
+	"Framework :: AiiDA"
+    ],
+    "install_requires": [
+	"plumpy>=0.15.0",
+	"aiida_core>=1.3.0,<2.0.0",
+	"aiida-pseudo>=0.6.2",
+	"ase>=3.22.0",
+	"sisl",
+	"sqlalchemy<1.4",
+        "TB2J>=0.7.1",
+        "aiida-siesta>=1.2"
+    ],
+    "entry_points": {
+        "aiida.calculations": [
+            "tb2j.tb2j = aiida_tb2j.calculations.tb2j:TB2JCalculation"
+        ],
+        "aiida.parsers": [
+            "tb2j.parser = aiida_tb2j.parsers.tb2j:TB2JParser",
+            "tb2j.basic = aiida_tb2j.parsers.basic:BasicParser"
+        ],
+        "aiida.workflows": [
+            "tb2j.siesta = aiida_tb2j.workflows.siesta:SiestaTB2JWorkChain",
+            "tb2j.dmi = aiida_tb2j.workflows.dmi:DMIWorkChain",
+            "tb2j.groundstate = aiida_tb2j.workflows:GroundStateWorkChain"
+        ],
+        "aiida.data": [
+            "tb2j.exchange = aiida_tb2j.data.exchange:ExchangeData"
+        ]
+    }
+}
