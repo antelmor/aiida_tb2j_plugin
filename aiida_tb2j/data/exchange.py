@@ -1,6 +1,78 @@
 import numpy as np
-from aiida.orm import ArrayData
+from pickle import load as pickle_load
+from aiida.orm import ArrayData, StructureData
 from aiida.orm.nodes.data.structure import Site
+
+uz = np.array([[0.0, 0.0, 1.0]])
+I = np.eye(3)
+
+def get_rotation_arrays(magmoms):
+
+    dim = magmoms.shape[0]
+    v = magmoms
+    n = v[:, [1, 0, 2]]
+    n[:, 0] *= -1
+    n[:, -1] *= 0
+    n /= np.linalg.norm(n, axis=-1).reshape(dim, 1)
+    z = np.repeat(uz, dim, axis=0)
+    A = np.stack([z, np.cross(n, z), n], axis=1)
+    B = np.stack([v, np.cross(n, v), n], axis=1)
+    R = np.einsum('nki,nkj->nij', A, B)
+
+    Rnan = np.isnan(R)
+    if Rnan.any():
+        nanidx = np.where(Rnan)[0]
+        R[nanidx] = I
+        R[nanidx, 2] = v[nanidx]
+
+    U = R[:, 0] + 1j*R[:, 1]
+    V = R[:, 2]
+
+    return U, V
+
+def Hermitize(array):
+
+    n = int( (2*array.shape[1])**0.5 )
+    result = np.zeros( array.shape[0:1] + (n, n) + array.shape[2:], dtype=np.complex128 )
+    u_indices = np.triu_indices(n)
+    l_indices = np.tril_indices(n)
+
+    result[( slice(None), *u_indices )] = array
+    lower_entries = np.transpose(result, axes=(0, 2, 1, 4, 3))
+    result[( slice(None), *l_indices )] = np.conjugate(lower_entries[( slice(None), *l_indices )])
+
+    return result
+
+def branched_keys(tb2j_keys, npairs):
+
+    from numpy.linalg import norm
+
+    msites = int( (2*npairs)**0.5 )
+    branch_size = int( len(tb2j_keys)/msites**2 )
+    new_keys = sorted(tb2j_keys, key=lambda x : -x[1] + x[2])[(npairs-msites)*branch_size:]
+    new_keys.sort(key=lambda x : x[1:])
+    bkeys = [new_keys[i:i+branch_size] for i in range(0, len(new_keys), branch_size)]
+
+    return [sorted(branch, key=lambda x : norm(x[0])) for branch in bkeys]
+
+def correct_content(content, quadratic=False):
+
+    from numpy import zeros
+
+    n = max(content['index_spin']) + 1
+
+    if content['colinear']:
+        content['exchange_Jdict'].update({((0, 0, 0), i, i): 0.0 for i in range(n)})
+    else:
+        shape = {
+            'exchange_Jdict': (),
+            'Jani_dict': (3, 3),
+            'dmi_ddict': (3)
+        }
+        if quadratic:
+            shape['biquadratic_Jdict'] = (2,)
+        for data_type in shape:
+            content[data_type].update({((0, 0, 0), i, i): zeros(shape[data_type]) for i in range(n)})
 
 class ExchangeData(ArrayData):
 
@@ -46,7 +118,7 @@ class ExchangeData(ArrayData):
 
         if self.is_stored:
             raise ModificationNotAllowed("ExchangeData cannot be modified because it has already been stored.")
-        the_pbc = get_valid_pbc(value)
+        the_pbc = tuple(get_valid_pbc(value))
 
         self.set_attribute('pbc', the_pbc)
 
@@ -80,8 +152,6 @@ class ExchangeData(ArrayData):
 
     def set_structure_info(self, structure, magmoms=None):
 
-        from aiida.orm import StructureData
-
         if not isinstance(structure, StructureData):
             raise TypeError(f"set_structure_info() argument must be of type 'StructureData', not {type(structure)}")
 
@@ -90,7 +160,7 @@ class ExchangeData(ArrayData):
 
     def magmoms(self):
 
-        return [site.magmom for site in self.sites]
+        return np.array([site.magmom for site in self.sites])
 
     @property
     def magnetic_elements(self):
@@ -144,6 +214,11 @@ class ExchangeData(ArrayData):
     def non_collinear(self, value):
 
         self.set_attribute('non_collinear', bool(value))
+
+    def _equivalent_magsites(self, roundup=2):
+
+        magmoms = self.magmoms().round(roundup)
+
 
     @property
     def units(self):
@@ -246,40 +321,94 @@ class ExchangeData(ArrayData):
         except KeyError:
             raise AttributeError("No stored 'Biquad' has been found.")
 
-    def _Jq(self, kpoints):
+    def get_exchange_tensor(self, with_Jani=True, with_DMI=True):
 
         try:
             Jiso = self.get_array('Jiso')
         except KeyError:
-            raise AttributeError("the array 'Jiso' must be set before calculating the magnon energies.")
+            raise AttributeError("The array 'Jiso' must be set before calculating the exchange tensor.")
+
+        arraynames = self.get_arraynames()
+        diag_indices = ([0, 1, 2], [0, 1, 2])
+    
+        if with_Jani and 'Jani' in arraynames:
+            tensor = self.get_Jani().copy()
+        else:
+            tensor = np.zeros(Jiso.shape + (3, 3))
+        tensor[( slice(None), slice(None), *diag_indices )] += Jiso.reshape(Jiso.shape + (1,))
+
+        if with_DMI and 'DMI' in arraynames:
+            pos_indeces = ([1, 2, 0], [2, 0, 1])
+            neg_indeces = ([2, 0, 1], [1, 2, 0])
+            DMI = self.get_DMI()
+            tensor[( slice(None), slice(None), *pos_indeces )] += DMI
+            tensor[( slice(None), slice(None), *neg_indeces )] -= DMI
+
+        return tensor
+
+    def _Jq(self, kpoints, with_Jani=False, with_DMI=False):
 
         vectors = self.get_vectors()
-        Jcos = np.cos( 2*np.pi*vectors @ kpoints.T ).T * Jiso.T
+        tensor = self.get_exchange_tensor(with_Jani, with_DMI)
+        exp_summand = np.exp( 2j*np.pi*vectors @ kpoints.T ).T
+        Jexp = exp_summand.reshape( (kpoints.shape[0], 1, 1) + exp_summand.shape[1:] ) * tensor.T
+        Jq = np.sum(Jexp, axis=3)
 
-        return np.sum(Jcos, axis=1)
+        return np.transpose(Jq, axes=(0, 3, 2, 1))
 
-    def _magnon_energies(self, kpoints):
+    def _H_matrix(self, kpoints, with_Jani=False, with_DMI=False):
 
-        magmoms = self.magmoms()
-        value_indices, sign_indices = list(zip(*self.pairs))
-        M_array = np.sign(np.take(magmoms, sign_indices)) / np.abs(np.take(magmoms, value_indices))
+        idx = sorted( set([pair[0] for pair in self.pairs]) )
+        if self.non_collinear:
+            magmoms = self.magmoms()[idx]
+        else:
+            magmoms = np.zeros((len(idx), 3))
+            magmoms[:, 2] = self.magmoms()[idx]
+        magmoms /= np.linalg.norm(magmoms, axis=-1).reshape(-1, 1)
 
-        gamma_indices = np.where((kpoints == np.zeros(3)).all(1))[0]
-        Jq = self._Jq(kpoints)
+        U, V = get_rotation_arrays(magmoms)
 
-        n = int( (2*len(self.pairs))**0.5 )
-        exchange_tensor = np.zeros((len(kpoints), n, n))
-        indices = np.triu_indices(n)
-        exchange_tensor[( slice(None), *indices )] = -Jq*M_array
+        J0 = self._Jq(np.array([[0, 0, 0]]), with_Jani, with_DMI)
+        J0 = -Hermitize( J0 )
+        Jq = -Hermitize( self._Jq(kpoints, with_Jani, with_DMI) )
+
+        C = np.diag( np.einsum('ix,ijxy,jy->i', V, 2*J0[0], V) )
+        B = np.einsum('ix,kijxy,jy->kij', U, Jq, U)
+        A1 = np.einsum('ix,kijxy,jy->kij', U, Jq, U.conjugate())
+        A2 = np.einsum('ix,kijxy,jy->kij', U.conjugate(), Jq, U)
+
+        return np.block([
+            [A1 - C, B],
+            [np.transpose(B, axes=(0, 2, 1)).conjugate(), A2 - C]
+        ])
+
+    def _magnon_energies(self, kpoints, with_Jani=False, with_DMI=False):
+
+        H = self._H_matrix(kpoints, with_Jani, with_DMI)
+        n = int( H.shape[-1] / 2 )
+        I = np.eye(n)
+
+        min_eig = 0.0
         try:
-            gamma_matrix = exchange_tensor[gamma_indices[0]]
-        except IndexError:
-            from ..utils import get_gamma_matrix
-            gamma_matrix = get_gamma_matrix(Jiso, M_array, n, indices)
-        gamma_matrix = -np.where(gamma_matrix, gamma_matrix, gamma_matrix.T)
-        exchange_tensor += np.diag( np.sum(gamma_matrix, axis=0) )
+            K = np.linalg.cholesky(H)
+        except np.linalg.LinAlgError:
+            try:
+                K = np.linalg.cholesky( H + 1e-7*np.eye(2*n) )
+            except np.linalg.LinAlgError:
+                import warnings
+                min_eig = np.min( np.linalg.eigvalsh(H) )
+                K = np.linalg.cholesky( H - (min_eig - 1e-7)*np.eye(2*n) )
+                warnings.warn(
+                "WARNING: The system may be far from the magnetic ground-state. The magnon energies might be unphysical."
+                )
 
-        return 4*np.linalg.eigvalsh(exchange_tensor, UPLO='U')
+        g = np.block([
+                [1*I, 0*I],
+                [0*I,-1*I]
+            ])
+        KH = np.transpose(K, axes=(0, 2, 1)).conjugate()
+
+        return np.linalg.eigvalsh( KH @ g @ K )[:, n:] + min_eig
 
     def get_magnon_bands(
             self,
@@ -288,12 +417,18 @@ class ExchangeData(ArrayData):
             npoints: int = 100,
             special_points: dict = None,
             tol: float = 2e-4,
+            pbc: tuple = None,
             cartesian: bool = False,
-            labels: list = None
+            labels: list = None,
+            with_Jani: bool = False,
+            with_DMI: bool = False
     ):
 
         from aiida.orm import BandsData
         bands_data = BandsData()
+
+        if pbc == None:
+            pbc = self.pbc
 
         if not kpoints.any():
             from ase.cell import Cell
@@ -302,7 +437,7 @@ class ExchangeData(ArrayData):
                 npoints=npoints, 
                 special_points=special_points,
                 eps=tol,
-                pbc=self.pbc
+                pbc=pbc
             )
             kpoints = bandpath.kpts
             spk = bandpath.special_points
@@ -314,8 +449,8 @@ class ExchangeData(ArrayData):
         if cartesian:
             bands_data.cell = self.cell
         
-        bands_data.set_kpoints(kpoints, cartesian=cartesian, labels=labels)
-        magnon_energies = self._magnon_energies( bands_data.get_kpoints() )
+        bands_data.set_kpoints(kpoints, cartesian=cartesian, labels=sorted(labels))
+        magnon_energies = self._magnon_energies( bands_data.get_kpoints(), with_Jani, with_DMI )
         bands_data.set_bands(magnon_energies, units=self.units)
 
         return bands_data
@@ -324,7 +459,10 @@ class ExchangeData(ArrayData):
             self, 
             kpoints: np.array = np.array([]),
             tolerance: float = 0,
-            pbc: tuple = None
+            pbc: tuple = None,
+            with_Jani: bool = False,
+            with_DMI: bool = False,
+            size: list = None
     ):
 
         if pbc == None:
@@ -332,19 +470,72 @@ class ExchangeData(ArrayData):
 
         if not kpoints.any():
             from TB2J.kpoints import monkhorst_pack
-            dimensions = np.ones(3, dtype=int)
-            dimensions[list(pbc)] = 8 
-            kpoints = monkhorst_pack(dimensions, gamma_center=True)
+            if size is None:
+                size = np.ones(3, dtype=int)
+                size[list(pbc)] = 16
+            kpoints = monkhorst_pack(size, gamma_center=True)
 
         n = int( (2*len(self.pairs))**0.5 )
-        Jq = self._Jq(kpoints)
-        J_matrix = np.zeros((len(kpoints), n, n))
-        J_matrix[( slice(None), *np.triu_indices(n) )] = Jq
-
-        Jeig = np.linalg.eigvalsh(J_matrix, UPLO='U')        
-        minimum_indices = np.where(np.max(Jeig) - Jeig <= tolerance)[0]
+        H = self._H_matrix( kpoints, with_Jani, with_DMI )
+        eigenvals = np.linalg.eigvalsh( H )
+        min_eig = np.min(eigenvals)
+        
+        minimum_indices = np.where(eigenvals - min_eig <= tolerance)[0]
  
         return kpoints[minimum_indices]
+
+    def get_structure(self):
+
+        structure = StructureData()
+        structure.cell = self.cell
+        structure.pbc = self.pbc
+        for atom in self.sites:
+            structure.append_atom(position=atom.position, symbols=atom.kind_name)
+
+        return structure
+
+    @classmethod
+    def load_tb2j(cls, content=None, pickle_file='TB2J.pickle', pbc=None, isotropic=True, quadratic=False):
+
+        if content is None:
+            try:
+                with open(pickle_file, 'rb') as File:
+                    content = pickle_load(File)
+                    correct_content(content)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"No such file or directory: '{pickle_file}'. Please provide a valid .pickle file.")
+
+        exchange = cls()
+        structure = StructureData(ase=content['atoms'])
+        
+        if content['colinear']:
+            exchange.non_collinear = False
+            exchange.set_structure_info(structure=structure, magmoms=content['magmoms'])
+        else:
+            exchange.non_collinear = True
+            exchange.set_structure_info(structure=structure, magmoms=content['spinat'])
+        exchange.magnetic_elements = [exchange.sites[i].kind_name for i in range(len(exchange.sites)) if content['index_spin'][i] >= 0]
+        if pbc is not None:
+            exchange.pbc = pbc
+
+        bkeys = branched_keys(content['distance_dict'].keys(), len(exchange.pairs))
+        vectors = [ [content['distance_dict'][key][0] for key in branch] for branch in bkeys ]
+        exchange.set_vectors(vectors, cartesian=True)
+            
+        Jiso = [ [content['exchange_Jdict'][key] for key in branch] for branch in bkeys ]
+        exchange.set_exchange_array('Jiso', Jiso)
+            
+        if exchange.non_collinear and not isotropic:
+           Jani = [ [content['Jani_dict'][key] for key in branch] for branch in bkeys ]
+           exchange.set_exchange_array('Jani', Jani)
+           DMI = [ [content['dmi_ddict'][key] for key in branch] for branch in bkeys ]
+           exchange.set_exchange_array('DMI', DMI)
+           if quadratic:
+               Biquad = [ [content['biquadratic_Jdict'][key] for key in branch] for branch in bkeys ]
+               exchange.set_exchange_array('Biquad', Biquad)
+
+        return exchange
+        
 
 class MagSite(Site):
 

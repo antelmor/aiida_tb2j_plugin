@@ -13,12 +13,12 @@ def get_magnetic_elements(pseudos):
 
     result = []
     for pseudo in configuration:
-        if [line for line in configuration[pseudo] if 'l="d"' in line and 'occupation="10"' not in line]:
+        if any(['l="d"' in line and 'occupation="10"' not in line for line in configuration[pseudo]]):
             result.append(pseudo)
 
     if not result:
         for pseudo in configuration:
-            if [line for line in configuration[pseudo] if ('l="p"' in line and 'occupation="6"' not in line) or 'l="d"' in line]:
+            if any([('l="p"' in line and 'occupation="6"' not in line) or 'l="d"' in line for line in configuration[pseudo]]):
                 result.append(pseudo)        
 
     return List(list=result)

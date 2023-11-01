@@ -19,11 +19,13 @@
     ],
     "entry_points": {
         "aiida.calculations": [
-            "tb2j.tb2j = aiida_tb2j.calculations.tb2j:TB2JCalculation"
+            "tb2j.tb2j = aiida_tb2j.calculations.tb2j:TB2JCalculation",
+	    "tb2j.vampire = aiida_tb2j.calculations.vampire:VampireCalculation"
         ],
         "aiida.parsers": [
             "tb2j.parser = aiida_tb2j.parsers.tb2j:TB2JParser",
-            "tb2j.basic = aiida_tb2j.parsers.basic:BasicParser"
+            "tb2j.basic = aiida_tb2j.parsers.basic:BasicParser",
+	    "vampire.parser = aiida_tb2j.parsers.vampire:VampireParser"
         ],
         "aiida.workflows": [
             "tb2j.siesta = aiida_tb2j.workflows.siesta:SiestaTB2JWorkChain",
@@ -31,7 +33,9 @@
             "tb2j.groundstate = aiida_tb2j.workflows:GroundStateWorkChain"
         ],
         "aiida.data": [
-            "tb2j.exchange = aiida_tb2j.data.exchange:ExchangeData"
+            "tb2j.exchange = aiida_tb2j.data.exchange:ExchangeData",
+	    "siesta.hubbard = aiida_tb2j.data.projectors:HubbardData",
+	    "tb2j.curie = aiida_tb2j.data.curie:CurieData"
         ]
     }
 }

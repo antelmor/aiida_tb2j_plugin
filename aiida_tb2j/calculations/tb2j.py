@@ -116,7 +116,6 @@ class TB2JCalculation(CalcJob):
         fdf_fname = 'aiida.fdf'
         kmesh = [5, 5, 5]; kmesh_is_present = False;
         supercell_size = 20.0
-        np = self.inputs.metadata.options.resources['num_cores_per_machine']
 
         if 'parameters' in self.inputs:
             param_dict = self.inputs.parameters.get_dict()
@@ -143,6 +142,9 @@ class TB2JCalculation(CalcJob):
                 kmesh = ceil(supercell_size / lattice_parameters).astype(int).tolist()
                 kmesh = [kmesh[i] if structure.pbc[i] else 1 for i in range(3)]
 
+        scheduler = self.inputs.code.computer.get_scheduler()
+        job_resources = scheduler.create_job_resource(**self.inputs.metadata.options.resources)
+        np = job_resources.tot_num_mpiprocs
             
         cmdline_params = [
             '--fdf_fname', fdf_fname,

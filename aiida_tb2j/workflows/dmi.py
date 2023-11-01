@@ -1,78 +1,21 @@
 from aiida import orm
 from aiida.common import AttributeDict
+from aiida.common.exceptions import NotExistentAttributeError
 from aiida.engine import calcfunction, ToContext, WorkChain
-from aiida_siesta.utils.tkdict import FDFDict
 from .siesta import TB2JSiestaWorkChain
 from ..data import ExchangeData
 
-def get_rotated_structures(structure):
+def validate_noncollinear_parameters(value, _):
 
-    from copy import deepcopy
+    if value:
+        from .siesta import validate_siesta_parameters
+        message = validate_siesta_parameters(value, _)
+        if message is not None:
+            return message
 
-    ase_object = structure.get_ase()
-    ase_x = deepcopy(ase_object)
-    ase_x.rotate(90, 'y', rotate_cell=True)
-    ase_y = deepcopy(ase_object)
-    ase_y.rotate(90, 'x', rotate_cell=True)
-
-    Structure = orm.StructureData
-    structure_x = Structure(ase=ase_x)
-    structure_y = Structure(ase=ase_y)
-
-    return {
-        'x': structure_x,
-        'y': structure_y,
-        'z': structure
-    }
-
-def get_merger_object(path_x, path_y, path_z):
-
-    from TB2J.io_merge import Merger
-
-    merger = Merger(path_x, path_y, path_z, method='structure')
-    merger.merge_Jiso()
-    merger.merge_DMI()
-    merger.merge_Jani()
-
-    return merger         
-
-@calcfunction
-def get_exchange(folder_x, folder_y, folder_z):
-
-    from ..parsers import correct_content, TB2JParser
-
-    path_x, path_y, path_z = [folder.get_remote_path() for folder in [folder_x, folder_y, folder_z]]
-    merger = get_merger_object(path_x, path_y, path_z)
-    content = merger.dat.__dict__
-    correct_content(content)
-
-    exchange_data = TB2JParser.get_exchange_data(content)
-
-    return exchange_data
-
-class DMIWorkChain(WorkChain):
-
-    @classmethod
-    def define(cls, spec):
-        super().define(spec)
-        spec.expose_inputs(TB2JSiestaWorkChain, exclude=('metadata',)) 
-
-        spec.outline(
-            cls.checks,
-            cls.run_tb2jsiesta,
-            cls.return_results
-        )
-
-        spec.output('exchange', valid_type=ExchangeData, required=True)
-
-        spec.exit_code(200, 'ERROR_TB2J_PLUGIN', message='At least one of the TB2J workflows failed.')
-        spec.exit_code(201, 'ERROR_MERGE_TB2J', message='The merging of the exchange values failed.')
-
-    def checks(self):
-
-        param_dict = self.inputs.parameters.get_dict()
-        translatedkey = FDFDict(param_dict)
-        sortedkey = sorted(translatedkey.get_filtered_items())
+        from aiida_siesta.utils.tkdict import FDFDict
+        input_params = FDFDict(value.get_dict())
+        sortedkey = sorted(input_params.get_filtered_items())
         collinear = True
         oldsintax = False
 
@@ -91,12 +34,154 @@ class DMIWorkChain(WorkChain):
                         collinear = False
 
         if collinear:
-            raise ValueError(
-                "The DMI work chain requires non-collinear spin. Set the 'spin' parameter "
-                "to either 'non-collinear' or 'spin-orbit'."
-            )
+            return ("The DMI work chain requires non-collinear spin. Set the 'spin' parameter " +
+                "to either 'non-collinear' or 'spin-orbit'.")
 
-    def run_tb2jsiesta(self):   
+def validate_spin_mode(value, _):
+
+    if value:
+        if value not in ['collinear', 'non-collinear', 'long']:
+            return (f"Unrecognized option '{value}'. Available options are: 'collinear', 'non-collinear', 'long'.")
+
+def validate_rotation_mode(value, _):
+
+    if value:
+        if value not in ['structure', 'spin']:
+            return f"Unrecognized option '{value}'. Available options are: 'structure' and 'spin'." 
+
+def get_rotated_structures(structure, mode='collinear'):
+
+    from copy import deepcopy
+
+    atoms = structure.get_ase()
+    if mode == 'collinear':
+        rotation_axes = ['x', 'y']
+    elif mode == 'non-collinear':
+        rotation_axes = [
+            (0, 0, 1), (0, 1, 0), (1, 1, 0), (1, 0, 1), (0, 1, 1)
+        ]
+    else:
+        rotation_axes = [
+            (0, 0, 1), (0, 1, 0), (1, 1, 0), (1, 0, 1), (0, 1, 1),
+            (-1, 1, 0), (-1, 0, 1), (0, -1, 1)
+        ]
+
+    structures = {}
+    for axis in rotation_axes:
+        rotated_atoms = deepcopy(atoms)
+        rotated_atoms.rotate(90, axis, rotate_cell=True)
+        rotated_structure = orm.StructureData(ase=rotated_atoms)
+        structures[axis] = rotated_structure
+
+    return structures
+
+def get_rotation_angles(mode='collinear'):
+
+    angles =  {
+        'x': orm.List([0.0, 90.0, 0.0]), 
+        'y': orm.List([-90.0, 0.0, 0.0])
+    }
+    if mode != 'collinear':
+        angles.update({
+            'zx': orm.List([0.0, 45.0, 0.0]),
+            'xy': orm.List([0.0, 90.0, 45.0]),
+            'yz': orm.List([0.0, 45.0, 90.0])
+        })
+
+    return angles
+
+def get_siesta_remote(process):
+
+    siesta_nodes = [node for node in process.called if node.process_label == 'SiestaBaseWorkChain']
+    siesta_nodes.sort(key=lambda node : node.pk)
+
+    return siesta_nodes[0].outputs.remote_folder
+
+def choose_main_process(*args):
+
+    def get_energy(process):
+        natoms = len(process.inputs.structure.sites)
+        for node in process.called:
+            try:
+                energy = node.outputs.output_parameters['E_KS']
+            except NotExistentAttributeError:
+                continue
+        return round(energy / natoms, 3)
+    procs = sorted(args, key=get_energy)
+
+    return procs[0]
+
+@calcfunction
+def get_exchange(**kwargs):
+
+    from ..utils import Merger
+    from ..parsers import correct_content
+
+    if 'structure' in kwargs:
+        structure = kwargs.pop('structure')
+        pbc = structure.pbc
+    else:
+        pbc= (True, True, True)
+ 
+    main_folder = kwargs.pop('main_folder', None)
+
+    folders = kwargs.values()
+    merger = Merger(*folders, main_folder=main_folder)
+    merger.merge_Jiso()
+    merger.merge_Jani()
+    merger.merge_DMI()
+
+    content = merger.main_dat.__dict__
+    correct_content(content)
+
+    exchange_data = ExchangeData.load_tb2j_content(content, pbc=pbc, isotropic=False)
+
+    return exchange_data
+
+class DMIWorkChain(WorkChain):
+
+    @classmethod
+    def define(cls, spec):
+        super().define(spec)
+        spec.expose_inputs(TB2JSiestaWorkChain, exclude=('metadata', 'parameters'))
+
+        spec.input(
+            'parameters',
+            valid_type=orm.Dict,
+            help='Input parameters for the SIESTA code',
+            validator=validate_noncollinear_parameters,
+            required=True
+        )
+        spec.input(
+            'spin_mode',
+            valid_type=orm.Str,
+            default=lambda: orm.Str('non-collinear'),
+            help='Specifies the number of rotations needed.',
+            validator=validate_spin_mode,
+            required=True
+        )
+        spec.input(
+            'rotation_mode',
+            valid_type=orm.Str,
+            default=lambda: orm.Str('structure'),
+            help='Specifies wheter the structure or the spins will be rotated.',
+            validator=validate_rotation_mode,
+            required=True
+        )
+
+        spec.outline(
+            cls.run_reference_process,
+            cls.run_rotated_processes,
+            cls.return_results
+        )
+
+        spec.output('exchange', valid_type=ExchangeData, required=True)
+
+        spec.exit_code(400, 'ERROR_TB2J_REF', message='The reference TB2J workflows failed.')
+        spec.exit_code(401, 'ERROR_TB2J_ROT', message='At least one of the rotated TB2J workflows failed.')
+        spec.exit_code(402, 'ERROR_MERGE_TB2J', message='The merging of the exchange values failed.')
+
+    def run_reference_process(self):
 
         inputs = self.exposed_inputs(TB2JSiestaWorkChain)
 
@@ -108,28 +193,66 @@ class DMIWorkChain(WorkChain):
             optio['resources']['num_machines'] = 1
             optio['resources']['num_cores_per_machine'] = 1
         optio['parser_name'] = 'tb2j.basic'
+        optio['withmpi'] = False
         inputs['tb2j_options'] = orm.Dict( dict=optio )
+        inputs['parameters'] = self.inputs.parameters
 
-        del inputs['structure']
-        structures = get_rotated_structures(self.inputs.structure)
-        for key, structure in structures.items():
-            process = self.submit(TB2JSiestaWorkChain, **inputs, structure=structure)
-            self.to_context(**{f'tb2j_{key}': process})
-            self.report(
-                f"Launched TB2JSiestaWorkChain<{process.pk}> for the {key}-rotated structure."
-            )
+        self.ctx.inputs = inputs
+        running = self.submit(TB2JSiestaWorkChain, **inputs)
+        self.report(
+            f"Launched TB2JSiestaWorkChain<{running.pk}> for the reference structure."
+        )
+
+        return ToContext(ref_process=running)
+
+    def run_rotated_processes(self):
+
+        ref_process = self.ctx.ref_process
+        if not ref_process.is_finished_ok:
+            return self.exit_codes.ERROR_TB2J_REF
+
+        inputs = self.ctx.inputs
+        if self.inputs.rotation_mode == 'structure':
+            del inputs['structure']
+            inputs.pop('parent_calc_folder', None)
+            structures = get_rotated_structures(self.inputs.structure, mode=self.inputs.spin_mode)
+            for key, structure in structures.items():
+                process = self.submit(TB2JSiestaWorkChain, **inputs, structure=structure)
+                self.to_context(**{f'tb2j_{key}': process})
+                self.report(
+                    f"Launched TB2JSiestaWorkChain<{process.pk}> for the {key}-rotated structure."
+                )
+            axes = structures.keys()
+        elif self.inputs.rotation_mode == 'spin':
+            inputs['parent_calc_folder'] = get_siesta_remote(ref_process)
+            spin_angles = get_rotation_angles(self.inputs.spin_mode)
+            for key, angles in spin_angles.items():
+                process = self.submit(TB2JSiestaWorkChain, **inputs, spin_angles=angles)
+                self.to_context(**{f'tb2j_{key}': process})
+                self.report(
+                    f"Launched TB2JSiestaWorkChain<{process.pk}> for the {key}-rotated calculation."
+                )
+            axes = spin_angles.keys()
+
+        self.ctx.rotation_axes = list(axes)
 
     def return_results(self):
 
         from aiida.engine import ExitCode
 
-        tb2j_processes = [self.ctx[f'tb2j_{i}'] for i in ['x', 'y', 'z']]
-        if not all([process.is_finished_ok for process in tb2j_processes]):
-            return self.exit_codes.ERROR_TB2J_PLUGIN
+        ref_process = self.ctx.ref_process
+        rotation_axes = self.ctx.rotation_axes
+        rotated_processes = {axis: self.ctx[f'tb2j_{axis}'] for axis in rotation_axes}
+        if not all([process.is_finished_ok for process in list(rotated_processes.values()) + [ref_process,]]):
+            return self.exit_codes.ERROR_TB2J_ROT
+        main_process = choose_main_process(ref_process, *rotated_processes.values())
 
-        folder_x, folder_y, folder_z = [process.outputs.remote_folder for process in tb2j_processes]
+        folders = {f'folder_{rotation_axes.index(axis)}': process.outputs.retrieved for axis, process in rotated_processes.items()}
+        folders['ref_folder'] = ref_process.outputs.retrieved
+        folders['main_folder'] = main_process.outputs.retrieved
+        folders['structure'] = self.inputs.structure
     
-        exchange = get_exchange(folder_x, folder_y, folder_z)
+        exchange = get_exchange(**folders)
 
         if 'array|Jiso' in exchange.attributes and 'array|DMI' in exchange.attributes:
             self.report(

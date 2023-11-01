@@ -1,65 +1,23 @@
 from aiida import orm
 from aiida.common import AttributeDict
-from aiida.engine import WorkChain, ToContext
-from aiida_siesta.workflows.base import SiestaBaseWorkChain
+from aiida.engine import WorkChain, ToContext, if_, while_
+from aiida_siesta.workflows.base import SiestaBaseWorkChain as ParentSiestaBaseWorkChain, validate_inputs
 from aiida_siesta.utils.tkdict import FDFDict
-from ..calculations import TB2JCalculation
+from ..calculations import TB2JCalculation, SiestaCalculation
 from ..calculations.tb2j import validate_parameters as validate_tb2j_parameters
 from ..data import ExchangeData
 
-class TB2JSiestaWorkChain(WorkChain):
+def validate_siesta_parameters(value, _):
 
-    @classmethod
-    def define(cls, spec):
-        super().define(spec)
-        spec.expose_inputs(SiestaBaseWorkChain, exclude=('metadata',))
-        
-        spec.input(
-            'tb2j_code', 
-            valid_type=orm.Code, 
-            help='TB2J siesta binary.'
-        )
-        spec.input(
-            'magnetic_elements',
-            valid_type=orm.List,
-            required=False,
-            validator=orm.nodes.data.structure.validate_symbols_tuple,
-            help='Elements for which the exchange interaction is considered.'
-                'If not provided, the code selects those with d or f orbitals.'
-        )
-        spec.input(
-            'tb2j_parameters', 
-            valid_type=orm.Dict, 
-            required=False,
-            validator=validate_tb2j_parameters,
-            help='Parameters used by the TB2J code'
-        )
-        spec.input(
-            'tb2j_options', 
-            valid_type=orm.Dict, 
-            required=False, 
-            help='TB2J code resources and options.'
-        )
+    if value:
+        from aiida_siesta.calculations.siesta import validate_parameters
+        message = validate_parameters(value, _)
+        if message is not None:
+            return message
 
-        spec.outline(
-            cls.checks,
-            cls.run_siesta_wc,
-            cls.run_tb2j,
-            cls.return_results
-        )
-
-        spec.output('exchange', valid_type=ExchangeData, required=False)
-        spec.output('remote_folder', valid_type=orm.RemoteData)
-
-        spec.exit_code(200, 'ERROR_BASE_WC', message='The main SiestaBaseWorkChain failed.')
-        spec.exit_code(201, 'ERROR_TB2J_PLUGIN', message='The TB2J calculation failed.')
-
-    def checks(self):
-
-        code = self.inputs.code
-        param_dict = self.inputs.parameters.get_dict()
-        translatedkey = FDFDict(param_dict)
-        sortedkey = sorted(translatedkey.get_filtered_items())
+        from aiida_siesta.utils.tkdict import FDFDict
+        input_params = FDFDict(value.get_dict())
+        sortedkey = sorted(input_params.get_filtered_items())
         spin = False
         newsintax = False
         oldsintax = False
@@ -76,36 +34,175 @@ class TB2JSiestaWorkChain(WorkChain):
                     spin = True
 
         if newsintax and oldsintax:
-            self.report(
-                "WARNING: in the siesta input parameters, both keywork 'spin' and "
-                "'spinpolarized' have been detected. This might confuse the WorkChain and return "
-                "unexpected outputs"
+            import warnings
+            warnings.warn(("WARNING: in the siesta input parameters, both keywork 'spin' and " +
+                "'spinpolarized' have been detected. This might confuse the WorkChain and return " +
+                "unexpected outputs")
             )
 
         if not spin:
-            raise ValueError(
-                "The exchange coefficients calculation requires a spin siesta calculation. "
-                "Set spin to either polarized, noncollinear or spinorbit."
-            ) 
+            return ("The exchange coefficients calculation requires a spin siesta calculation. " +
+                "Set spin to either polarized, noncollinear or spinorbit.")
 
         missing_ncdf = ncdf_parameters
         for k, v in sortedkey:
             if k in ncdf_parameters and v in [True, 'T', 'true', '.true.']:
                 missing_ncdf.remove(k)
         if missing_ncdf:
-            raise ValueError(
-                f"The options {str(missing_ncdf).strip('[]')} need to be set up to True"
-                "in order to use the TB2J code."
-            )
+            return (f"The options {str(missing_ncdf).strip('[]')} need to be set up to True " +
+                "in order to use the TB2J code.")
+
+def validate_symbols(value, _):
+
+    if value:
+        is_valid_symbol = orm.nodes.data.structure.is_valid_symbol
+        if len(value) == 0:
+            return "The list of elements cannot be empty."
+        elif not all(is_valid_symbol(sym) for sym in value):
+            return (f"At least one element of the symbol list {list(value)} has not " +
+                "been recognized")
+
+def validate_siesta_inputs(value, _):
+
+    message = validate_inputs(value, _)
+    if message:
+        return message
+    if 'spin_angles' in value and 'parent_calc_folder' not in value:
+        return "If 'spin_angles' are specified, a 'parent_calc_folder' must be provided."
+
+class SiestaBaseWorkChain(ParentSiestaBaseWorkChain):
+
+    _process_class = SiestaCalculation
+    _proc_exit_cod = _process_class.exit_codes
+
+    @classmethod
+    def define(cls, spec):
+
+        super().define(spec)
+        spec.expose_inputs(SiestaCalculation, include=('spin_angles',))
+
+        spec.outline(
+            cls.setup,
+            cls.preprocess,
+            while_(cls.should_run_process)(
+                cls.prepare_inputs,
+                cls.run_process,
+                cls.inspect_process,
+            ),
+            cls.results,
+            cls.postprocess,
+        )
+
+        spec.expose_outputs(SiestaCalculation)
+        spec.inputs.validator = validate_siesta_inputs
+
+    def preprocess(self):
+
+        super().prepare_inputs()
+
+    def prepare_inputs(self):
+
+        if self.ctx.iteration == 0 and 'spin_angles' in self.inputs:
+            self.ctx.inputs['spin_angles'] = self.inputs.spin_angles
+            
+
+class TB2JSiestaWorkChain(WorkChain):
+
+    @classmethod
+    def define(cls, spec):
+        
+        super().define(spec)
+        spec.expose_inputs(SiestaBaseWorkChain, exclude=('metadata', 'parameters'))
+        
+        spec.input(
+            'parameters',
+            valid_type=orm.Dict,
+            validator=validate_siesta_parameters,
+            help='Input parameters for the SIESTA code'
+        ) 
+        spec.input(
+            'magnetic_elements',
+            valid_type=orm.List,
+            required=False,
+            validator=validate_symbols,
+            help='Elements for which the exchange interaction is considered.'
+                'If not provided, the code selects those with d or f orbitals.'
+        )
+        spec.input(
+            'tb2j_code',
+            valid_type=orm.Code,
+            help='TB2J Siesta binary.'
+        )
+        spec.input(
+            'tb2j_parameters', 
+            valid_type=orm.Dict, 
+            required=False,
+            validator=validate_tb2j_parameters,
+            help='Parameters used by the TB2J code'
+        )
+        spec.input(
+            'tb2j_options', 
+            valid_type=orm.Dict, 
+            required=False, 
+            help='TB2J code resources and options.'
+        )
+        spec.input(
+            'converge_spin_orbit',
+            valid_type=orm.Bool,
+            default=lambda : orm.Bool(False),
+            help='Wether perform a non-collinear calculation befor spin-orbit'
+        )
+
+        spec.outline(
+            if_(cls.converge_before)(
+                cls.run_siesta_prior
+            ),
+            cls.run_siesta_wc,
+            cls.run_tb2j,
+            cls.return_results
+        )
+
+        spec.output('exchange', valid_type=ExchangeData, required=False)
+        spec.output('retrieved', valid_type=orm.FolderData)
+        spec.output('remote_folder', valid_type=orm.RemoteData)
+
+        spec.exit_code(400, 'ERROR_SIESTA_WC', message='The main SiestaBaseWorkChain failed.')
+        spec.exit_code(401, 'ERROR_TB2J_PLUGIN', message='The TB2J calculation failed.')
+        spec.exit_code(403, 'ERROR_SIESTA_AUX', message='The support SiestaBaseWorkChain failed.')
+
+    def converge_before(self):
+
+        return self.inputs.converge_spin_orbit
+
+    def run_siesta_prior(self):
+
+        param_dict = self.inputs.parameters.get_dict()
+        param_dict['spin'] = 'non-collinear'
+        inputs = AttributeDict(self.exposed_inputs(SiestaBaseWorkChain))
+        inputs['parameters'] = orm.Dict(dict=param_dict)
+        running = self.submit(SiestaBaseWorkChain, **inputs)
+        self.report(
+            f"Launched SiestaBaseWorkChain<{running.pk}> to help convergence."
+        )
+
+        return ToContext(siesta_prior=running)
 
     def run_siesta_wc(self):
 
-        inputs = AttributeDict(self.exposed_inputs(SiestaBaseWorkChain))        
+        inputs = AttributeDict(self.exposed_inputs(SiestaBaseWorkChain))
+        inputs['parameters'] = self.inputs.parameters
+        if self.inputs.converge_spin_orbit:
+            if not self.ctx.siesta_prior.is_finished_ok:
+                return self.exit_codes.ERROR_SIESTA_AUX
+            inputs.pop('spin_angles', None)
+            inputs['parent_calc_folder'] = self.ctx.siesta_prior.outputs.remote_folder
+
         running = self.submit(SiestaBaseWorkChain, **inputs)
         self.report(
-            f"Launched SiestaBaseWorkChain<{running.pk}> to perform the siesta calculation."
+            f"Launched SiestaBaseWorkChain<{running.pk}> to perform the Siesta calculation."
         )
-        return ToContext(workchain_base=running)
+
+        return ToContext(siesta_wc=running)
 
     def _magnetic_elements(self):
 
@@ -131,8 +228,8 @@ class TB2JSiestaWorkChain(WorkChain):
 
     def run_tb2j(self):
 
-        if not self.ctx.workchain_base.is_finished_ok:
-            return self.exit_codes.ERROR_BASE_WC
+        if not self.ctx.siesta_wc.is_finished_ok:
+            return self.exit_codes.ERROR_SIESTA_WC
  
         magnetic_elements = self._magnetic_elements()
 
@@ -153,9 +250,9 @@ class TB2JSiestaWorkChain(WorkChain):
             optio = self.inputs.options.get_dict()
             optio['resources']['num_machines'] = 1
             optio['resources']['num_cores_per_machine'] = 1 
-        optio['withmpi'] = False
+            optio['withmpi'] = False
 
-        siesta_remote = self.ctx.workchain_base.outputs.remote_folder
+        siesta_remote = self.ctx.siesta_wc.outputs.remote_folder
         tb2j_inputs['siesta_remote'] = siesta_remote
         tb2j_inputs['metadata'] = {'options': optio}
         running = self.submit(TB2JCalculation, **tb2j_inputs)
@@ -174,8 +271,10 @@ class TB2JSiestaWorkChain(WorkChain):
             exchange_data = self.ctx.tb2j_step.outputs.exchange
             self.out('exchange', exchange_data)
         
-        remote_folder = self.ctx.tb2j_step.outputs.remote_folder
-        self.out('remote_folder', remote_folder)
+        retrieved = self.ctx.tb2j_step.outputs.retrieved
+        remote = self.ctx.tb2j_step.outputs.remote_folder
+        self.out('retrieved', retrieved)
+        self.out('remote_folder', remote)
 
         self.report('TB2J workchain completed succesfully.')
         return ExitCode(0)
