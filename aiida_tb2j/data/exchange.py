@@ -2,6 +2,7 @@ import numpy as np
 from pickle import load as pickle_load
 from aiida.orm import ArrayData, StructureData
 from aiida.orm.nodes.data.structure import Site
+from scipy.spatial.transform import Rotation
 
 uz = np.array([[0.0, 0.0, 1.0]])
 I = np.eye(3)
@@ -346,17 +347,24 @@ class ExchangeData(ArrayData):
 
         return tensor
 
-    def _Jq(self, kpoints, with_Jani=False, with_DMI=False):
+    def _Jq(self, kpoints, with_Jani=False, with_DMI=False, Q=None, n=[0, 0, 1]):
 
         vectors = self.get_vectors()
         tensor = self.get_exchange_tensor(with_Jani, with_DMI)
+        
+        if Q is not None:
+            phi = 2*np.pi* vectors.round(3).astype(int) @ Q
+            rv = np.einsum('ij,k->ijk', phi, n)
+            R = Rotation.from_rotvec(rv.reshape(-1, 3)).as_matrix().reshape(vectors.shape[:2] + (3, 3))
+            np.einsum('nmij,nmjk->nmik', tensor, R, out=tensor)
+
         exp_summand = np.exp( 2j*np.pi*vectors @ kpoints.T ).T
         Jexp = exp_summand.reshape( (kpoints.shape[0], 1, 1) + exp_summand.shape[1:] ) * tensor.T
         Jq = np.sum(Jexp, axis=3)
 
         return np.transpose(Jq, axes=(0, 3, 2, 1))
 
-    def _H_matrix(self, kpoints, with_Jani=False, with_DMI=False):
+    def _H_matrix(self, kpoints, with_Jani=False, with_DMI=False, Q=None, n=[0, 0, 1]):
 
         idx = sorted( set([pair[0] for pair in self.pairs]) )
         if self.non_collinear:
@@ -368,9 +376,9 @@ class ExchangeData(ArrayData):
 
         U, V = get_rotation_arrays(magmoms)
 
-        J0 = self._Jq(np.array([[0, 0, 0]]), with_Jani, with_DMI)
+        J0 = self._Jq(np.array([[0, 0, 0]]), with_Jani, with_DMI, Q=Q, n=n)
         J0 = -Hermitize( J0 )
-        Jq = -Hermitize( self._Jq(kpoints, with_Jani, with_DMI) )
+        Jq = -Hermitize( self._Jq(kpoints, with_Jani, with_DMI, Q=Q, n=n) )
 
         C = np.diag( np.einsum('ix,ijxy,jy->i', V, 2*J0[0], V) )
         B = np.einsum('ix,kijxy,jy->kij', U, Jq, U)
@@ -382,24 +390,24 @@ class ExchangeData(ArrayData):
             [np.transpose(B, axes=(0, 2, 1)).conjugate(), A2 - C]
         ])
 
-    def _magnon_energies(self, kpoints, with_Jani=False, with_DMI=False):
+    def _magnon_energies(self, kpoints, with_Jani=False, with_DMI=False, Q=None, n=[0, 0, 1]):
 
-        H = self._H_matrix(kpoints, with_Jani, with_DMI)
-        n = int( H.shape[-1] / 2 )
-        I = np.eye(n)
+        H = self._H_matrix(kpoints, with_Jani, with_DMI, Q=Q, n=n)
+        N = int( H.shape[-1] / 2 )
+        I = np.eye(N)
 
         min_eig = 0.0
         try:
             K = np.linalg.cholesky(H)
         except np.linalg.LinAlgError:
             try:
-                K = np.linalg.cholesky( H + 1e-7*np.eye(2*n) )
+                K = np.linalg.cholesky( H + 1e-7*np.eye(2*N) )
             except np.linalg.LinAlgError:
                 import warnings
                 min_eig = np.min( np.linalg.eigvalsh(H) )
-                K = np.linalg.cholesky( H - (min_eig - 1e-7)*np.eye(2*n) )
+                K = np.linalg.cholesky( H - (min_eig - 1e-7)*np.eye(2*N) )
                 warnings.warn(
-                "WARNING: The system may be far from the magnetic ground-state. The magnon energies might be unphysical."
+                    f"WARNING: The system may be far from the magnetic ground-state. Minimum eigenvalue: {min_eig}. The magnon energies might be unphysical."
                 )
 
         g = np.block([
@@ -408,7 +416,7 @@ class ExchangeData(ArrayData):
             ])
         KH = np.transpose(K, axes=(0, 2, 1)).conjugate()
 
-        return np.linalg.eigvalsh( KH @ g @ K )[:, n:] + min_eig
+        return np.linalg.eigvalsh( KH @ g @ K )[:, N:] + min_eig
 
     def get_magnon_bands(
             self,
@@ -421,7 +429,9 @@ class ExchangeData(ArrayData):
             cartesian: bool = False,
             labels: list = None,
             with_Jani: bool = False,
-            with_DMI: bool = False
+            with_DMI: bool = False,
+            Q: np.array = None,
+            n: np.array = np.array([0.0, 0.0, 1.0])
     ):
 
         from aiida.orm import BandsData
@@ -450,7 +460,7 @@ class ExchangeData(ArrayData):
             bands_data.cell = self.cell
         
         bands_data.set_kpoints(kpoints, cartesian=cartesian, labels=sorted(labels))
-        magnon_energies = self._magnon_energies( bands_data.get_kpoints(), with_Jani, with_DMI )
+        magnon_energies = self._magnon_energies( bands_data.get_kpoints(), with_Jani, with_DMI, Q, n )
         bands_data.set_bands(magnon_energies, units=self.units)
 
         return bands_data
