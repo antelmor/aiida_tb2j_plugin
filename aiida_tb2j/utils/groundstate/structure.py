@@ -1,4 +1,5 @@
 import numpy as np
+from itertools import product
 from itertools import combinations, permutations
 from ase.build.supercells import make_supercell
 from scipy.spatial.transform import Rotation
@@ -8,13 +9,10 @@ from .orientation import get_new_parameters
 
 def generate_coefficients(size):
 
-    dim = len(size)
-    coefficients = np.stack(
-        np.meshgrid(*[np.arange(number+1) for number in size]), 
-        axis=-1
-    ).reshape(-1, dim)[1:]
+    r = [range(s) for s in size]
+    coefficients = sorted(product(*r), key=sum)
 
-    return coefficients[np.linalg.norm(coefficients, axis=-1).argsort()]
+    return coefficients[1:]
 
 def get_symmetric_sites(
         q_vector: np.array, 
