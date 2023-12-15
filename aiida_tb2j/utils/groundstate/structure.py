@@ -1,11 +1,14 @@
 import numpy as np
-from itertools import product
-from itertools import combinations, permutations
+from itertools import product, permutations
+from fractions import Fraction
+from math import lcm
 from ase.build.supercells import make_supercell
 from scipy.spatial.transform import Rotation
 from aiida.orm import Dict, StructureData
-from ...data import ExchangeData
-from .orientation import get_new_parameters
+#from ...data import ExchangeData
+from aiida_tb2j.data import ExchangeData
+#from .orientation import get_new_parameters
+from aiida_tb2j.utils.groundstate.orientation import get_new_parameters
 
 def generate_coefficients(size):
 
@@ -14,25 +17,24 @@ def generate_coefficients(size):
 
     return coefficients[1:]
 
-def get_symmetric_sites(
-        q_vector: np.array, 
-        coefficients: np.array,
-        dim: int = 3
-    ):
+def find_coefficients(integers, multiple):
 
-    symmetry_values = (coefficients @ q_vector).round(5)
-    indices = np.where(symmetry_values % 1 == 0.0)
-    selected_coefficients = coefficients[indices]
+    positives = [x for x in integers[:-1] if x > 0]
+    
+    if integers[-1] == 0:
+        return [0,]*len(integers[:-1]) + [1,]
+    elif not positives:
+        c = -1
+    else:
+        for values in generate_coefficients([multiple,]*len(positives)):
+            c = np.dot(values, positives)
+            if not c % integers[-1]:
+                coefs = list(values)
+                c /= integers[-1]
+                break
+    result = [n if not n else coefs.pop(0) for n in integers[:-1]]
 
-    for matrix in combinations(selected_coefficients, dim):
-        if np.linalg.det(matrix).round(5) != 0.0:
-            result = np.array(matrix)
-            break
-
-    try:
-        return result
-    except UnboundLocalError:
-        return np.diag(np.inf*np.ones(3))
+    return result + [c,]
 
 def reorder_rows(T):
 
@@ -44,28 +46,28 @@ def reorder_rows(T):
     return P[index][0]
 
 def get_transformation_matrix(
-        kpoints: np.array, 
-        coefficients: np.array,
-        pbc: tuple = (True, True, True)
+        q_vector: np.array,
+        max_size: np.array
     ):
 
-    dim = len([b for b in pbc if b])
-    possible_sites = np.array(
-        [get_symmetric_sites(vector, coefficients, dim) for vector in kpoints.T[list(pbc)].T]
-    )
-    determinants = np.abs( np.linalg.det(possible_sites) )
-    min_index = np.where( determinants == np.min(determinants) )[0][0]
-    min_kpoint = kpoints[min_index]
+    rationals = [Fraction.from_float(x).limit_denominator(N).as_integer_ratio() for x, N in zip(q_vector, max_size)]
+    l, m = zip(*rationals)
+    c = lcm(*m)
+    print(l, m, c)
+    k = [int(q_vector[i]*c)%c for i in range(3)]
+    print(k)
 
-    symmetric_sites = possible_sites[min_index]
-    if np.linalg.det(symmetric_sites) < 0.0:
-        symmetric_sites[(0, 1), :] = symmetric_sites[(1, 0), :]
-    transformation_matrix = np.eye(3).astype(int)
-    mask = np.array([[x and y for y in pbc] for x in pbc])
-    transformation_matrix[mask] = np.reshape(symmetric_sites, (-1,))
-    T = reorder_rows(transformation_matrix)
+    T = np.array([
+            find_coefficients([k[0]], c) + [0,0],
+            find_coefficients([c-k[0], k[1]], c) + [0,],
+            find_coefficients([c-k[0], c-k[1], k[2]], c)
+    ])
+    nidx = np.where(T < 0)
+    T[nidx] = np.array(m)[nidx[0]]
 
-    return T, min_kpoint
+    T = reorder_rows(T)
+
+    return T
 
 def groundstate_structure(
         exchange: ExchangeData,
