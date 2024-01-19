@@ -21,13 +21,13 @@ def angles2cart(array):
 
 def cart2spher(array):
 
-   new_array = np.empty(array.shape)
-   xy = array[:,0]**2 + array[:,1]**2
-   new_array[:,0] = np.sqrt(xy + array[:,2]**2)
-   new_array[:,1] = 180/np.pi*np.arctan2(np.sqrt(xy), array[:,2])
-   new_array[:,2] = 180/np.pi*np.arctan2(array[:,1], array[:,0])
+    new_array = np.empty(array.shape)
+    xy = array[:,0]**2 + array[:,1]**2
+    new_array[:,0] = np.sqrt(xy + array[:,2]**2)
+    new_array[:,1] = 180/np.pi*np.arctan2(np.sqrt(xy), array[:,2])
+    new_array[:,2] = 180/np.pi*np.arctan2(array[:,1], array[:,0])
    
-   return new_array
+    return new_array
 
 def H0_matrix(magmoms, J0):
 
@@ -48,7 +48,7 @@ def H0_matrix(magmoms, J0):
         [B.swapaxes(1, 2).conjugate(), A2 - C]
     ])
 
-def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20, threshold=1e-2, magmom_threshold=0.1, verbosity=False, kpoint=np.zeros(3)):
+def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20, threshold=1e-2, magmom_threshold=0.1, verbosity=False, Q=None, kpoint=np.zeros(3), with_DMI=True, with_Jani=True):
 
     idx = sorted( set([pair[0] for pair in exchange.pairs]) )
     if exchange.non_collinear:
@@ -58,7 +58,7 @@ def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20
         magmoms[:, 2] = exchange.magmoms()[idx]
 
     magnorm = np.linalg.norm(magmoms, axis=-1)
-    J0 = 1e+6*exchange._Jq(np.array([kpoint]), with_Jani=True, with_DMI=True)
+    J0 = 1e+6*exchange._Jq(np.array([kpoint]), with_Jani=with_DMI, with_DMI=with_Jani, Q=Q)
     J0 = -Hermitize( J0 )[0]
 
     jdx = np.where(magnorm > magmom_threshold)[0]
