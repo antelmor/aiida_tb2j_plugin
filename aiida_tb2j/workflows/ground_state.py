@@ -3,7 +3,7 @@ from aiida.engine import WorkChain, while_, ToContext, calcfunction
 from aiida.common import AttributeDict
 from . import TB2JSiestaWorkChain, MagneticOrientationWorkChain  
 from ..data import ExchangeData
-from ..utils import generate_coefficients, groundstate_data
+from ..utils import groundstate_data
 import numpy as np
 
 def validate_scale_processes_options(value, _):
