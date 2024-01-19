@@ -7,8 +7,12 @@ from scipy.spatial.transform import Rotation
 from aiida.orm import Dict, StructureData
 #from ...data import ExchangeData
 from aiida_tb2j.data import ExchangeData
-#from .orientation import get_new_parameters
-from aiida_tb2j.utils.groundstate.orientation import get_new_parameters
+#from .orientation import find_orientation
+from aiida_tb2j.utils.groundstate.orientation import find_orientation
+#from .kpoints import find_minimum_kpoints
+from aiida_tb2j.utils.groundstate.kpoints import find_minimum_kpoints
+#from .rotation_axis import optimize_rotation_axis
+from aiida_tb2j.utils.groundstate.rotation_axis import optimize_rotation_axis
 
 def generate_coefficients(size):
 
@@ -47,7 +51,7 @@ def reorder_rows(T):
 
 def get_transformation_matrix(
         q_vector: np.array,
-        max_size: np.array
+        max_size: np.array=8*np.ones(3)
     ):
 
     rationals = [Fraction.from_float(x).limit_denominator(N).as_integer_ratio() for x, N in zip(q_vector, max_size)]
@@ -72,27 +76,18 @@ def get_transformation_matrix(
 def groundstate_structure(
         exchange: ExchangeData,
         old_structure: StructureData,
-        tolerance: float = 0.0,
-        maximum_size: list = None,
-        coefficients: np.array = None,
+        max_size: list = 8*np.ones(3),
         with_DMI: bool = False,
         with_Jani: bool = False
     ):
 
-    pbc = list(old_structure.pbc)
     base_rcell = 2*np.pi* np.linalg.inv(old_structure.cell).T
 
-    if coefficients is None:
-        if maximum_size is None:
-            maximum_size = np.array([16 if value else 1 for value in pbc])
-        coefficients = generate_coefficients(maximum_size[pbc])
-
     rcell = exchange.reciprocal_cell()
-    min_kpoints = exchange.find_minimum_kpoints(
-        tolerance=tolerance, pbc=pbc, size=maximum_size, with_DMI=with_DMI, with_Jani=with_Jani
-    )
-    kpoints = np.linalg.solve(base_rcell.T, (min_kpoints @ rcell).T).T
-    T, q = get_transformation_matrix(kpoints, coefficients, pbc=pbc)
+    min_k = find_minimum_kpoints(exchange, with_DMI=with_DMI, with_Jani=with_Jani)
+
+    q = np.linalg.solve(base_rcell.T, (min_k @ rcell).T).T
+    T = get_transformation_matrix(q, max_size)
 
     atoms = old_structure.get_ase()
     supercell = make_supercell(atoms, T)
@@ -120,10 +115,7 @@ def get_rotated_magmoms(
     new_magmoms = vrepeat(magmoms, ratio)
 
     if rot_axis is None:
-        rot_axis = np.cross( np.array([0.0, 1.0, 0.0]), magmoms[ref_index] )
-        if np.linalg.norm(rot_axis) < 1e-2:
-            rot_axis = np.cross( np.array([0.0, 0.0, 1.0]), magmoms[ref_index] )
-    rot_axis /= np.linalg.norm(rot_axis)
+        rot_axis = optimize_rotation_axis(exchange, Q=q_vector, kvector=q_vector)
     rot_axis = vrepeat(rot_axis, len(new_magmoms))
 
     phi = 2*np.pi* positions @ q_vector
@@ -133,10 +125,32 @@ def get_rotated_magmoms(
 
     return rotated_magmoms
 
+def get_new_parameters(magmoms, parameters):
+
+    param_dict = FDFDict(parameters.get_dict()).get_dict()
+    try:
+        del param_dict['spinpolarized']
+    except KeyError:
+        pass
+    if 'spin' not in param_dict:
+        param_dict['spin'] = 'non-collinear'
+    elif param_dict['spin'] != 'spin-orbit':
+        param_dict['spin'] = 'non-collinear'
+
+    nspins = len(magmoms)
+    m = cart2spher(magmoms.round(2)).round(2)
+    init_spin = ''.join(
+        [f'\n {i+1} {m[i, 0]} {m[i, 1]} {m[i, 2]}' for i in range(nspins)]
+    )
+    param_dict['%block dminitspin'] = init_spin + '\n%endblock dminitspin'
+
+    return Dict(dict=param_dict)
+
 def groundstate_data(
         exchange: ExchangeData,
         parameters: Dict,
         magmoms: np.array = None,
+        optimize_magmoms: bool = False,
         tolerance: float = 0.0,
         maximum_size: list = None,
         coefficients: np.array = None,
@@ -155,12 +169,15 @@ def groundstate_data(
         exchange, old_structure, tolerance, maximum_size, coefficients, with_DMI, with_Jani
     )
 
-    if magmoms is None:
+    if optimize_magmoms:
+        magmoms = find_orientation(exchange) 
+    elif magmoms is None:
         if exchange.non_collinear:
             magmoms = exchange.magmoms().round(2)
         else:
             magmoms = np.zeros((len(exchange.sites), 3))
             magmoms[:, 2] = exchange.magmoms()
+
     cart_positions = np.array([site.position for site in structure.sites])
     positions = np.linalg.solve(ref_cell.T, cart_positions.T).T
     if not spiral_mode:

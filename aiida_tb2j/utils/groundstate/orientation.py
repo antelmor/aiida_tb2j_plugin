@@ -77,7 +77,7 @@ def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20
     minimizer_options = {
         'options': options,
         'method': method,
-        'bounds': [(-np.pi, np.pi), (0.0, 2*np.pi)]*len(jdx)
+        'bounds': [(0.0, np.pi), (0.0, 2*np.pi)]*len(jdx)
     }
     def stop_fun(x, f, accepted):
         if verbosity:
@@ -92,24 +92,3 @@ def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20
         print(optimize_result)
 
     return magmoms
-
-def get_new_parameters(magmoms, parameters):
-
-    param_dict = FDFDict(parameters.get_dict()).get_dict()
-    try:
-        del param_dict['spinpolarized']
-    except KeyError:
-        pass
-    if 'spin' not in param_dict:
-        param_dict['spin'] = 'non-collinear'
-    elif param_dict['spin'] != 'spin-orbit':
-        param_dict['spin'] = 'non-collinear'
-
-    nspins = len(magmoms)
-    m = cart2spher(magmoms.round(2)).round(2)
-    init_spin = ''.join(
-        [f'\n {i+1} {m[i, 0]} {m[i, 1]} {m[i, 2]}' for i in range(nspins)]
-    )
-    param_dict['%block dminitspin'] = init_spin + '\n%endblock dminitspin'
-
-    return Dict(dict=param_dict) 
