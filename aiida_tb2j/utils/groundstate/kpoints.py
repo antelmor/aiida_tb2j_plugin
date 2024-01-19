@@ -46,7 +46,7 @@ def find_minimum_kpoints(
         magmoms /= np.linalg.norm(magmoms, axis=-1).reshape(-1, 1)
 
     vectors = exchange.get_vectors()
-    tensor = exchange.get_exchange_tensor(with_Jani, with_DMI)
+    tensor = exchange.get_exchange_tensor(with_Jani=with_Jani, with_DMI=with_DMI)
     U, V = get_rotation_arrays(magmoms)
 
     J0 = exchange._Jq(np.zeros((1, 3)), with_Jani, with_DMI)
@@ -55,7 +55,7 @@ def find_minimum_kpoints(
 
     def magnon_energies(kpoints):
         k = kpoints.reshape(-1, 3)
-        H = H_matrix(vectors, tensor, k, C, U, with_Jani=with_Jani, with_DMI=with_DMI)
+        H = H_matrix(vectors, tensor, k, C, U)
         w = np.linalg.eigvalsh(H)
         return np.min(w)
 
