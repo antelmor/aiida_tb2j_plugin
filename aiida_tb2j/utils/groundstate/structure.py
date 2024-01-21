@@ -17,28 +17,9 @@ from aiida_tb2j.utils.groundstate.rotation_axis import optimize_rotation_axis
 def generate_coefficients(size):
 
     r = [range(s) for s in size]
-    coefficients = sorted(product(*r), key=sum)
+    coefficients = sorted(product(*r), key=np.linalg.norm)
 
     return coefficients[1:]
-
-def find_coefficients(integers, multiple):
-
-    positives = [x for x in integers[:-1] if x > 0]
-    
-    if integers[-1] == 0:
-        return [0,]*len(integers[:-1]) + [1,]
-    elif not positives:
-        c = -1
-    else:
-        for values in generate_coefficients([multiple,]*len(positives)):
-            c = np.dot(values, positives)
-            if not c % integers[-1]:
-                coefs = list(values)
-                c /= integers[-1]
-                break
-    result = [n if not n else coefs.pop(0) for n in integers[:-1]]
-
-    return result + [c,]
 
 def reorder_rows(T):
 
@@ -54,18 +35,22 @@ def get_transformation_matrix(
         max_size: np.array=8*np.ones(3)
     ):
 
-    rationals = [Fraction.from_float(x).limit_denominator(N).as_integer_ratio() for x, N in zip(q_vector, max_size)]
+    rationals = [Fraction.from_float(x).limit_denominator(int(N)).as_integer_ratio() for x, N in zip(q_vector, max_size)]
     l, m = zip(*rationals)
     c = lcm(*m)
-    print(l, m, c)
-    k = [int(q_vector[i]*c)%c for i in range(3)]
-    print(k)
+    k = [int(l[i]/m[i]*c)%c for i in range(3)]
 
-    T = np.array([
-            find_coefficients([k[0]], c) + [0,0],
-            find_coefficients([c-k[0], k[1]], c) + [0,],
-            find_coefficients([c-k[0], c-k[1], k[2]], c)
-    ])
+    T = []
+    for n1, n2, n3 in generate_coefficients([x+1 if x else 0 for x in m]):
+        if (n1*k[0] + n2*k[1] + n3*k[2]) % c == 0:
+            if len(T) == 2:
+                if np.linalg.det(T + [[n1, n2, n3]]) != 0.0:
+                    T.append([n1, n2, n3])
+                    break
+            else:
+                T.append([n1, n2, n3])
+
+    T = np.array(T)
     nidx = np.where(T < 0)
     T[nidx] = np.array(m)[nidx[0]]
 
