@@ -5,14 +5,12 @@ from math import lcm
 from ase.build.supercells import make_supercell
 from scipy.spatial.transform import Rotation
 from aiida.orm import Dict, StructureData
-#from ...data import ExchangeData
-from aiida_tb2j.data import ExchangeData
-#from .orientation import find_orientation
-from aiida_tb2j.utils.groundstate.orientation import find_orientation
-#from .kpoints import find_minimum_kpoints
-from aiida_tb2j.utils.groundstate.kpoints import find_minimum_kpoints
-#from .rotation_axis import optimize_rotation_axis
-from aiida_tb2j.utils.groundstate.rotation_axis import optimize_rotation_axis
+from aiida_siesta.utils.tkdict import FDFDict
+
+from ...data import ExchangeData
+from .orientation import cart2spher, find_orientation
+from .kpoints import find_minimum_kpoints
+from .rotation_axis import optimize_rotation_axis
 
 def generate_coefficients(size):
 
@@ -99,8 +97,6 @@ def get_rotated_magmoms(
     ratio = int( len(positions)/len(magmoms) )
     new_magmoms = vrepeat(magmoms, ratio)
 
-    if rot_axis is None:
-        rot_axis = optimize_rotation_axis(exchange, Q=q_vector, kvector=q_vector)
     rot_axis = vrepeat(rot_axis, len(new_magmoms))
 
     phi = 2*np.pi* positions @ q_vector
@@ -137,7 +133,7 @@ def groundstate_data(
         magmoms: np.array = None,
         optimize_magmoms: bool = False,
         tolerance: float = 0.0,
-        maximum_size: list = None,
+        maximum_size: np.array = 8*np.ones(3),
         coefficients: np.array = None,
         old_structure: StructureData = None,
         with_DMI: bool = False,
@@ -151,7 +147,7 @@ def groundstate_data(
     ref_cell = np.array(old_structure.cell)
 
     structure, q_vector = groundstate_structure(
-        exchange, old_structure, tolerance, maximum_size, coefficients, with_DMI, with_Jani
+        exchange, old_structure, maximum_size, with_DMI, with_Jani
     )
 
     if optimize_magmoms:
@@ -162,6 +158,9 @@ def groundstate_data(
         else:
             magmoms = np.zeros((len(exchange.sites), 3))
             magmoms[:, 2] = exchange.magmoms()
+
+    if rot_axis is None:
+        rot_axis = optimize_rotation_axis(exchange, Q=q_vector, kvector=q_vector)
 
     cart_positions = np.array([site.position for site in structure.sites])
     positions = np.linalg.solve(ref_cell.T, cart_positions.T).T

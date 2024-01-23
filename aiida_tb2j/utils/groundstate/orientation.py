@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from scipy.optimize import basinhopping
 from aiida.orm import Dict
-from aiida_siesta.utils.tkdict import FDFDict
+
 from ...data.exchange import Hermitize, get_rotation_arrays
 
 
@@ -48,20 +48,21 @@ def H0_matrix(magmoms, J0):
         [B.swapaxes(1, 2).conjugate(), A2 - C]
     ])
 
-def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20, threshold=1e-2, magmom_threshold=0.1, verbosity=False, Q=None, kpoint=np.zeros(3), with_DMI=True, with_Jani=True):
+def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20, threshold=1e-3, magmom_threshold=0.0, verbosity=False, Q=None, kpoint=np.zeros(3), with_DMI=True, with_Jani=True):
 
     idx = sorted( set([pair[0] for pair in exchange.pairs]) )
     if exchange.non_collinear:
-        magmoms = exchange.magmoms()[idx]
+        final_magmoms = exchange.magmoms()
     else:
-        magmoms = np.zeros((len(idx), 3))
-        magmoms[:, 2] = exchange.magmoms()[idx]
+        final_magmoms = np.zeros((len(exchange.sites), 3))
+        final_magmoms[:, 2] = exchange.magmoms()
+    magmoms = final_magmoms[idx]
 
     magnorm = np.linalg.norm(magmoms, axis=-1)
-    J0 = 1e+6*exchange._Jq(np.array([kpoint]), with_Jani=with_DMI, with_DMI=with_Jani, Q=Q)
+    J0 = 1e+3*exchange._Jq(np.array([kpoint]), with_Jani=with_DMI, with_DMI=with_Jani, Q=Q)
     J0 = -Hermitize( J0 )[0]
 
-    jdx = np.where(magnorm > magmom_threshold)[0]
+    jdx = np.where(magnorm >= magmom_threshold)[0]
 
     def eval_gamma(angles):
         magmoms[jdx] = angles2cart(angles.reshape(-1, 2))
@@ -91,4 +92,6 @@ def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20
     if verbosity:
         print(optimize_result)
 
-    return magmoms
+    final_magmoms[idx] = magmoms
+
+    return final_magmoms
