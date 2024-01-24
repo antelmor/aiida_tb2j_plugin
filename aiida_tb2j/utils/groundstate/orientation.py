@@ -5,7 +5,6 @@ from aiida.orm import Dict
 
 from ...data.exchange import Hermitize, get_rotation_arrays
 
-
 uz = np.array([[0.0, 0.0, 1.0]])
 I = np.eye(3)
 
@@ -48,7 +47,20 @@ def H0_matrix(magmoms, J0):
         [B.swapaxes(1, 2).conjugate(), A2 - C]
     ])
 
-def find_orientation(exchange, x0=None, method='L-BFGS-B', maxiter=180, niter=20, threshold=1e-3, magmom_threshold=0.0, verbosity=False, Q=None, kpoint=np.zeros(3), with_DMI=True, with_Jani=True):
+def find_orientation(
+        exchange: np.array, 
+        x0: np.array = None, 
+        method: str = 'L-BFGS-B', 
+        maxiter: int = 180, 
+        niter: int = 20, 
+        threshold: float = 1e-3, 
+        magmom_threshold: float = 0.0, 
+        verbosity: bool = False, 
+        Q: np.array = None, 
+        kpoint: np.array = np.zeros(3), 
+        with_DMI: bool=True, 
+        with_Jani: bool=True
+    ):
 
     idx = sorted( set([pair[0] for pair in exchange.pairs]) )
     if exchange.non_collinear:
