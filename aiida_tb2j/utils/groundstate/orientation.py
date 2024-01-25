@@ -54,12 +54,12 @@ def find_orientation(
         maxiter: int = 180, 
         niter: int = 20, 
         threshold: float = 1e-3, 
-        magmom_threshold: float = 0.0, 
-        verbosity: bool = False, 
+        magmom_threshold: float = 0.0,
         Q: np.array = None, 
         kpoint: np.array = np.zeros(3), 
-        with_DMI: bool=True, 
-        with_Jani: bool=True
+        with_DMI: bool = True, 
+        with_Jani: bool = True,
+        verbosity: bool = False
     ):
 
     idx = sorted( set([pair[0] for pair in exchange.pairs]) )

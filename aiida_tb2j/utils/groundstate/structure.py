@@ -60,14 +60,13 @@ def groundstate_structure(
         exchange: ExchangeData,
         old_structure: StructureData,
         max_size: list = 8*np.ones(3),
-        with_DMI: bool = False,
-        with_Jani: bool = False
+        **kwargs
     ):
 
     base_rcell = 2*np.pi* np.linalg.inv(old_structure.cell).T
 
     rcell = exchange.reciprocal_cell()
-    min_k = find_minimum_kpoints(exchange, with_DMI=with_DMI, with_Jani=with_Jani)
+    min_k = find_minimum_kpoints(exchange, **kwargs)
 
     q = np.linalg.solve(base_rcell.T, (min_k @ rcell).T).T
     T = get_transformation_matrix(q, max_size)
@@ -132,26 +131,25 @@ def groundstate_data(
         parameters: Dict,
         magmoms: np.array = None,
         optimize_magmoms: bool = False,
-        tolerance: float = 0.0,
         maximum_size: np.array = 8*np.ones(3),
-        coefficients: np.array = None,
         old_structure: StructureData = None,
-        with_DMI: bool = False,
-        with_Jani: bool = False,
         spiral_mode: bool = False,
         rot_axis: np.array = None
+        optimizer_kwargs: dict = {}
     ):
+
+    tolerance = optimizer_kwargs.pop(1e-3)
 
     if old_structure is None:
         old_structure = exchange.get_structure()
     ref_cell = np.array(old_structure.cell)
 
     structure, q_vector = groundstate_structure(
-        exchange, old_structure, maximum_size, with_DMI, with_Jani
+        exchange, old_structure, maximum_size, **optimizer_kwargs
     )
 
     if optimize_magmoms:
-        magmoms = find_orientation(exchange) 
+        magmoms = find_orientation(exchange, tolerance=tolerance, **optimizer_kwargs)
     elif magmoms is None:
         if exchange.non_collinear:
             magmoms = exchange.magmoms().round(2)
@@ -160,7 +158,7 @@ def groundstate_data(
             magmoms[:, 2] = exchange.magmoms()
 
     if rot_axis is None:
-        rot_axis = optimize_rotation_axis(exchange, Q=q_vector, kvector=q_vector)
+        rot_axis = optimize_rotation_axis(exchange, Q=q_vector, kvector=q_vector, **optimizer_kwargs)
 
     cart_positions = np.array([site.position for site in structure.sites])
     positions = np.linalg.solve(ref_cell.T, cart_positions.T).T

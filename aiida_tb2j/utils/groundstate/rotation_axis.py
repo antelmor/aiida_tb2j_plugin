@@ -45,7 +45,19 @@ def H_matrix(vectors, kvector, C, U):
         [B.T.conjugate(), A2 - C]
     ])
 
-def optimize_rotation_axis(exchange, Q=np.array([0.0, 0.0, 0.0]), kvector=np.array([0.0, 0.0, 0.0]), n0=np.array([0.0, 0.0]), method='L-BFGS-B', options={}, niter=20, threshold=1e-3, with_Jani=True, with_DMI=True, verbosity=False):
+def optimize_rotation_axis(
+        exchange: np.array, 
+        Q: np.array = np.zeros(3), 
+        kvector: np.array = np.zeros(3), 
+        n0: np.array = np.zeros(3), 
+        method: str = 'L-BFGS-B', 
+        maxiter: int = 180, 
+        niter: int = 20, 
+        threshold: float = 1e-3, 
+        with_Jani: bool = True, 
+        with_DMI: bool = True, 
+        verbosity: bool = False
+    ):
 
     idx = sorted( set([pair[0] for pair in exchange.pairs]) )
     if exchange.non_collinear:
@@ -76,7 +88,7 @@ def optimize_rotation_axis(exchange, Q=np.array([0.0, 0.0, 0.0]), kvector=np.arr
         return np.min(w)
 
     minimizer_options = {
-        'options': options,
+        'options': {'maxiter': maxiter},
         'method': method,
         'bounds': [(0.0, np.pi), (0.0, 2*np.pi)],
     }

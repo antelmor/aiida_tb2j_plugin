@@ -25,7 +25,7 @@ def H_matrix(vectors, tensor, kpoints, C, U):
     ])
 
 def find_minimum_kpoints(
-        exchange, 
+        exchange: np.array, 
         x0: np.array=None, 
         method: str='L-BFGS-B', 
         maxiter: int=180, 
@@ -70,12 +70,11 @@ def find_minimum_kpoints(
         'bounds': [(-0.5, 0.5) if x else (0.0, 0.0) for x in exchange.pbc]
     }
 
-    def stop_fun(x, f, accepted):
+    def info(x, f, accepted):
         if verbosity:
             print("at minimum %.4f accepted %d" % (f, int(accepted)))
-        return abs(f) < 1e-15
 
-    optimize_result = basinhopping(magnon_energies, x0, niter=niter, minimizer_kwargs=minimizer_options)
+    optimize_result = basinhopping(magnon_energies, x0, callback=info, niter=niter, minimizer_kwargs=minimizer_options)
     min_kpoint = optimize_result.x
 
     if verbosity:
