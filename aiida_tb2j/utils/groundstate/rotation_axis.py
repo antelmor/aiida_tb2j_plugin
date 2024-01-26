@@ -53,7 +53,6 @@ def optimize_rotation_axis(
         method: str = 'L-BFGS-B', 
         maxiter: int = 180, 
         niter: int = 20, 
-        threshold: float = 1e-3, 
         with_Jani: bool = True, 
         with_DMI: bool = True, 
         verbosity: bool = False

@@ -138,7 +138,7 @@ def groundstate_data(
         optimizer_kwargs: dict = {}
     ):
 
-    tolerance = optimizer_kwargs.pop('tolerance', 1e-3)
+    threshold = optimizer_kwargs.pop('threshold', 1e-3)
 
     if old_structure is None:
         old_structure = exchange.get_structure()
@@ -149,7 +149,7 @@ def groundstate_data(
     )
 
     if optimize_magmoms:
-        magmoms = find_orientation(exchange, tolerance=tolerance, **optimizer_kwargs)
+        magmoms = find_orientation(exchange, threshold=threshold, **optimizer_kwargs)
     elif magmoms is None:
         if exchange.non_collinear:
             magmoms = exchange.magmoms().round(2)
