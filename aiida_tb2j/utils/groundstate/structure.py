@@ -134,11 +134,11 @@ def groundstate_data(
         maximum_size: np.array = 8*np.ones(3),
         old_structure: StructureData = None,
         spiral_mode: bool = False,
-        rot_axis: np.array = None
+        rot_axis: np.array = None,
         optimizer_kwargs: dict = {}
     ):
 
-    tolerance = optimizer_kwargs.pop(1e-3)
+    tolerance = optimizer_kwargs.pop('tolerance', 1e-3)
 
     if old_structure is None:
         old_structure = exchange.get_structure()

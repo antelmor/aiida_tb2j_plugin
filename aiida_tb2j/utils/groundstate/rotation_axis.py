@@ -49,7 +49,7 @@ def optimize_rotation_axis(
         exchange: np.array, 
         Q: np.array = np.zeros(3), 
         kvector: np.array = np.zeros(3), 
-        n0: np.array = np.zeros(3), 
+        n0: np.array = np.zeros(2), 
         method: str = 'L-BFGS-B', 
         maxiter: int = 180, 
         niter: int = 20, 
