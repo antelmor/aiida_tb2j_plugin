@@ -33,7 +33,8 @@ def find_minimum_kpoints(
         with_Jani: bool=True, 
         with_DMI: bool=True, 
         magmoms: np.array=None,
-        verbosity: bool=False
+        verbosity: bool=False,
+        threshold: float=1e-3
     ):
 
     idx = sorted( set([pair[0] for pair in exchange.pairs]) )
@@ -75,7 +76,10 @@ def find_minimum_kpoints(
             print("at minimum %.4f accepted %d" % (f, int(accepted)))
 
     optimize_result = basinhopping(magnon_energies, x0, callback=info, niter=niter, minimizer_kwargs=minimizer_options)
-    min_kpoint = optimize_result.x
+    min_energy, energy0 = exchange._magnon_energies(
+            np.vstack([optimize_result.x, np.zeros(3)]), with_DMI=with_DMI, with_Jani=with_Jani
+    ).min(axis=-1)
+    min_kpoint = optimize_result.x if abs(min_energy - energy0) > threshold else np.zeros(3)
 
     if verbosity:
         print(optimize_result)

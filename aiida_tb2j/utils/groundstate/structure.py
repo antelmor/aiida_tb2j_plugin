@@ -41,12 +41,10 @@ def get_transformation_matrix(
     T = []
     for n1, n2, n3 in generate_coefficients([x+1 if x else 0 for x in m]):
         if (n1*k[0] + n2*k[1] + n3*k[2]) % c == 0:
-            if len(T) == 2:
-                if np.linalg.det(T + [[n1, n2, n3]]) != 0.0:
-                    T.append([n1, n2, n3])
-                    break
-            else:
+            if np.linalg.matrix_rank(T + [[n1, n2, n3]]) > len(T):
                 T.append([n1, n2, n3])
+        if len(T) == 3:
+            break
 
     T = np.array(T)
     nidx = np.where(T < 0)
@@ -58,20 +56,14 @@ def get_transformation_matrix(
 
 def groundstate_structure(
         exchange: ExchangeData,
-        old_structure: StructureData,
         max_size: list = 8*np.ones(3),
         **kwargs
     ):
 
-    base_rcell = 2*np.pi* np.linalg.inv(old_structure.cell).T
-
-    rcell = exchange.reciprocal_cell()
-    min_k = find_minimum_kpoints(exchange, **kwargs)
-
-    q = np.linalg.solve(base_rcell.T, (min_k @ rcell).T).T
+    q = find_minimum_kpoints(exchange, **kwargs)
     T = get_transformation_matrix(q, max_size)
 
-    atoms = old_structure.get_ase()
+    atoms = exchange.get_structure().get_ase()
     supercell = make_supercell(atoms, T)
     new_structure = StructureData(ase=supercell)
 
@@ -132,24 +124,22 @@ def groundstate_data(
         magmoms: np.array = None,
         optimize_magmoms: bool = False,
         maximum_size: np.array = 8*np.ones(3),
-        old_structure: StructureData = None,
         spiral_mode: bool = False,
         rot_axis: np.array = None,
         optimizer_kwargs: dict = {}
     ):
 
-    threshold = optimizer_kwargs.pop('threshold', 1e-3)
+    threshold = optimizer_kwargs.pop('threshold', 1e-6)
+    min_magmom = optimizer_kwargs.pop('min_magmom', 0.0)
 
-    if old_structure is None:
-        old_structure = exchange.get_structure()
-    ref_cell = np.array(old_structure.cell)
+    ref_cell = exchange.cell
 
     structure, q_vector = groundstate_structure(
-        exchange, old_structure, maximum_size, **optimizer_kwargs
+        exchange, maximum_size, threshold=threshold, **optimizer_kwargs
     )
 
     if optimize_magmoms:
-        magmoms = find_orientation(exchange, threshold=threshold, **optimizer_kwargs)
+        magmoms = find_orientation(exchange, threshold=threshold, min_magmom=min_magmom, **optimizer_kwargs)
     elif magmoms is None:
         if exchange.non_collinear:
             magmoms = exchange.magmoms().round(2)

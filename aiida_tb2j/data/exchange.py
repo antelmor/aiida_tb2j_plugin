@@ -4,6 +4,7 @@ from aiida.orm import ArrayData, StructureData
 from aiida.orm.nodes.data.structure import Site
 from scipy.spatial.transform import Rotation
 
+np.seterr(divide='ignore', invalid='ignore')
 uz = np.array([[0.0, 0.0, 1.0]])
 I = np.eye(3)
 
@@ -390,7 +391,7 @@ class ExchangeData(ArrayData):
             [np.transpose(B, axes=(0, 2, 1)).conjugate(), A2 - C]
         ])
 
-    def _magnon_energies(self, kpoints, with_Jani=False, with_DMI=False, Q=None, n=[0, 0, 1]):
+    def _magnon_energies(self, kpoints, with_Jani=True, with_DMI=True, Q=None, n=[0, 0, 1]):
 
         H = self._H_matrix(kpoints, with_Jani, with_DMI, Q=Q, n=n)
         N = int( H.shape[-1] / 2 )

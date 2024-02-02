@@ -159,10 +159,10 @@ class TB2JCalculation(CalcJob):
             ]
          
         remote_copy_list = []
-        remote_copy_list.append((
-            siesta_remote.computer.uuid, os.path.join(siesta_path, self._restart_copy_from), self._restart_copy_to))
-        remote_copy_list.append((
-            siesta_remote.computer.uuid, os.path.join(siesta_path, fdf_fname), self._restart_copy_to))
+        for fname in [fdf_fname, self._restart_copy_from, '*.HSX']:
+            remote_copy_list.append((
+                siesta_remote.computer.uuid, os.path.join(siesta_path, fname), self._restart_copy_to
+            ))
 
         codeinfo = CodeInfo()
         codeinfo.cmdline_params = cmdline_params

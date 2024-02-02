@@ -150,7 +150,7 @@ class TB2JSiestaWorkChain(WorkChain):
             'converge_spin_orbit',
             valid_type=orm.Bool,
             default=lambda : orm.Bool(False),
-            help='Wether perform a non-collinear calculation befor spin-orbit'
+            help='Wether perform a non-collinear calculation before spin-orbit'
         )
 
         spec.outline(

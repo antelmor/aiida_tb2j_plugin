@@ -54,7 +54,7 @@ def find_orientation(
         maxiter: int = 180, 
         niter: int = 20, 
         threshold: float = 1e-3, 
-        magmom_threshold: float = 0.0,
+        min_magmom: float = 0.0,
         Q: np.array = None, 
         kpoint: np.array = np.zeros(3), 
         with_DMI: bool = True, 
@@ -74,7 +74,7 @@ def find_orientation(
     J0 = 1e+3*exchange._Jq(np.array([kpoint]), with_Jani=with_DMI, with_DMI=with_Jani, Q=Q)
     J0 = -Hermitize( J0 )[0]
 
-    jdx = np.where(magnorm >= magmom_threshold)[0]
+    jdx = np.where(magnorm >= min_magmom)[0]
 
     def eval_gamma(angles):
         magmoms[jdx] = angles2cart(angles.reshape(-1, 2))
