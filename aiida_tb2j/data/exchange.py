@@ -362,8 +362,13 @@ class ExchangeData(ArrayData):
         exp_summand = np.exp( 2j*np.pi*vectors @ kpoints.T ).T
         Jexp = exp_summand.reshape( (kpoints.shape[0], 1, 1) + exp_summand.shape[1:] ) * tensor.T
         Jq = np.sum(Jexp, axis=3)
+        Jq = np.transpose(Jq, axes=(0, 3, 2, 1))
 
-        return np.transpose(Jq, axes=(0, 3, 2, 1))
+        pairs = np.array(self.pairs)
+        idx = np.where(pairs[:, 0] == pairs[:, 1])
+        Jq[:, idx, :, :] /= 2
+
+        return Jq
 
     def _H_matrix(self, kpoints, with_Jani=False, with_DMI=False, Q=None, n=[0, 0, 1]):
 

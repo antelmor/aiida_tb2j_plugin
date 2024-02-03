@@ -3,17 +3,20 @@ from scipy.optimize import basinhopping
 
 from ...data.exchange import Hermitize, get_rotation_arrays
 
-def get_Jq(vectors, tensor, kpoints):
+def get_Jq(vectors, tensor, kpoints, idx_pairs):
 
     exp_summand = np.exp( 2j*np.pi*vectors @ kpoints.T ).T
     Jexp = exp_summand.reshape( (kpoints.shape[0], 1, 1) + exp_summand.shape[1:] ) * tensor.T
     Jq = np.sum(Jexp, axis=3)
 
-    return np.transpose(Jq, axes=(0, 3, 2, 1))
+    Jq = np.transpose(Jq, axes=(0, 3, 2, 1))
+    Jq[:, idx_pairs, :, :] /= 2
 
-def H_matrix(vectors, tensor, kpoints, C, U):
+    return Jq
 
-    Jq = -Hermitize( get_Jq(vectors, tensor, kpoints) )
+def H_matrix(vectors, tensor, kpoints, C, U, idx_pairs):
+
+    Jq = -Hermitize( get_Jq(vectors, tensor, kpoints, idx_pairs) )
 
     B = np.einsum('ix,kijxy,jy->kij', U, Jq, U)
     A1 = np.einsum('ix,kijxy,jy->kij', U, Jq, U.conjugate())
@@ -46,6 +49,9 @@ def find_minimum_kpoints(
             magmoms[:, 2] = exchange.magmoms()[idx]
         magmoms /= np.linalg.norm(magmoms, axis=-1).reshape(-1, 1)
 
+    pairs = np.array(exchange.pairs)
+    idx_pairs = np.where(pairs[:, 0] == pairs[:, 1])
+
     vectors = exchange.get_vectors()
     tensor = exchange.get_exchange_tensor(with_Jani=with_Jani, with_DMI=with_DMI)
     U, V = get_rotation_arrays(magmoms)
@@ -56,7 +62,7 @@ def find_minimum_kpoints(
 
     def magnon_energies(kpoints):
         k = kpoints.reshape(-1, 3)
-        H = H_matrix(vectors, tensor, k, C, U)
+        H = H_matrix(vectors, tensor, k, C, U, idx_pairs)
         w = np.linalg.eigvalsh(H)
         return np.min(w)
 

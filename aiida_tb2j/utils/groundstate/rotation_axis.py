@@ -11,11 +11,12 @@ def rotate_tensor(vectors, tensor, phi, n):
     R = Rotation.from_rotvec(rv.reshape(-1, 3)).as_matrix().reshape(tensor.shape[:2] + (3, 3))
     np.einsum('nmij,nmjk->nmik', tensor, R, out=rtensor)
 
-def get_Jq(vectors, kvector):
+def get_Jq(vectors, kvector, idx_pairs):
 
     exp_summand = np.exp( 2j*np.pi*vectors @ kvector )
     Jexp = exp_summand.reshape( rtensor.shape[:2] + (1, 1) ) * rtensor
     Jq = np.sum(Jexp, axis=1)
+    Jq[idx_pairs, :, :] /= 2
 
     return Jq
 
@@ -32,9 +33,9 @@ def Hermitize(array):
 
     return result
 
-def H_matrix(vectors, kvector, C, U):
+def H_matrix(vectors, kvector, C, U, idx_pairs):
 
-    Jq = -Hermitize( get_Jq(vectors, kvector) )
+    Jq = -Hermitize( get_Jq(vectors, kvector, idx_pairs) )
 
     B = np.einsum('ix,ijxy,jy->ij', U, Jq, U)
     A1 = np.einsum('ix,ijxy,jy->ij', U, Jq, U.conjugate())
@@ -66,6 +67,9 @@ def optimize_rotation_axis(
         magmoms[:, 2] = exchange.magmoms()[idx]
     magmoms /= np.linalg.norm(magmoms, axis=-1).reshape(-1, 1)
 
+    pairs = np.array(exchange.pairs)
+    idx_pairs = np.where(pairs[:, 0] == pairs[:, 1])
+
     vectors = exchange.get_vectors()
     tensor = 1000*exchange.get_exchange_tensor(with_Jani=with_Jani, with_DMI=with_DMI)
 
@@ -75,14 +79,14 @@ def optimize_rotation_axis(
 
     phi = 2*np.pi* vectors.round(3).astype(int) @ Q
     U, V = get_rotation_arrays(magmoms)
-    J0 = get_Jq(vectors, np.zeros(3))
+    J0 = get_Jq(vectors, np.zeros(3), idx_pairs)
     J0 = -Hermitize( J0 )
     C = np.diag( np.einsum('ix,ijxy,jy->i', V, 2*J0, V) )
 
     def magnon_energy(rot_axis):
         n = angles2cart(rot_axis.reshape(-1, 2)).reshape(3)
         rotate_tensor(vectors, tensor, phi, n)
-        H = H_matrix(vectors, kvector, C, U)
+        H = H_matrix(vectors, kvector, C, U, idx_pairs)
         w = np.linalg.eigvalsh(H)
         return np.min(w)
 
