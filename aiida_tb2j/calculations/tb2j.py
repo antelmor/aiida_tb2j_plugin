@@ -159,7 +159,7 @@ class TB2JCalculation(CalcJob):
             ]
          
         remote_copy_list = []
-        for fname in [fdf_fname, self._restart_copy_from, '*.HSX']:
+        for fname in [fdf_fname, self._restart_copy_from, '*.HSX', '*.EIG']:
             remote_copy_list.append((
                 siesta_remote.computer.uuid, os.path.join(siesta_path, fname), self._restart_copy_to
             ))
