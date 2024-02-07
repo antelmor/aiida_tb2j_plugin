@@ -135,7 +135,6 @@ class GroundStateWorkChain(WorkChain):
         self.ctx.kpoints = self.inputs.kpoints
         self.ctx.options = self.inputs.options
 
-        self.ctx.max_size = 2*np.array(self.inputs.kpoints.get_kpoints_mesh()[0])
         self.ctx.isotropic = optimization_options.pop('isotropic', True)
         self.ctx.energy_threshold = float(optimization_options.pop('energy', 1e-4))
         self.ctx.max_iterations = int(optimization_options.pop('max_iterations', 3))
@@ -241,7 +240,6 @@ class GroundStateWorkChain(WorkChain):
             exchange_data,
             self.inputs.parameters,
             optimize_magmoms=True,
-            maximum_size=self.ctx.max_size,
             optimizer_kwargs={'threshold': self.ctx.energy_threshold}
         ) 
 

@@ -29,11 +29,20 @@ def reorder_rows(T):
     return P[index][0]
 
 def get_transformation_matrix(
+        exchange: ExchangeData,
         q_vector: np.array,
-        max_size: np.array=8*np.ones(3)
+        threshold: float=1e-5
     ):
 
-    rationals = [Fraction.from_float(x).limit_denominator(int(N)).as_integer_ratio() for x, N in zip(q_vector, max_size)]
+    min_energy = exchange._magnon_energies(q_vector.reshape(1, 3)).min()
+    ediff = np.inf
+    max_size = np.ones(3)
+    while ediff > threshold:
+        rationals = [float(Fraction.from_float(x).limit_denominator(int(N))) for x, N in zip(q_vector, max_size)]
+        ediff = abs(min_energy - exchange._magnon_energies(np.array(rationals).reshape(1, 3)).min())
+        max_size += 1
+
+    rationals = [r.as_integer_ratio() for r in rationals]
     l, m = zip(*rationals)
     c = lcm(*m)
     k = [int(l[i]/m[i]*c)%c for i in range(3)]
@@ -56,12 +65,12 @@ def get_transformation_matrix(
 
 def groundstate_structure(
         exchange: ExchangeData,
-        max_size: list = 8*np.ones(3),
+        threshold: float=1e-5,
         **kwargs
     ):
 
     q = find_minimum_kpoints(exchange, **kwargs)
-    T = get_transformation_matrix(q, max_size)
+    T = get_transformation_matrix(exchange, q, threshold=threshold)
 
     atoms = exchange.get_structure().get_ase()
     supercell = make_supercell(atoms, T)
@@ -123,7 +132,6 @@ def groundstate_data(
         parameters: Dict,
         magmoms: np.array = None,
         optimize_magmoms: bool = False,
-        maximum_size: np.array = 8*np.ones(3),
         spiral_mode: bool = False,
         rot_axis: np.array = None,
         optimizer_kwargs: dict = {}
@@ -135,7 +143,7 @@ def groundstate_data(
     ref_cell = exchange.cell
 
     structure, q_vector = groundstate_structure(
-        exchange, maximum_size, threshold=threshold, **optimizer_kwargs
+        exchange, threshold=threshold, **optimizer_kwargs
     )
 
     if optimize_magmoms:
