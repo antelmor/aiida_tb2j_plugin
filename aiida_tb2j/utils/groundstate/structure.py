@@ -14,10 +14,14 @@ from .rotation_axis import optimize_rotation_axis
 
 def generate_coefficients(size):
 
-    r = [range(s) for s in size]
-    coefficients = sorted(product(*r), key=np.linalg.norm)
+    coefficients = np.stack(
+        np.meshgrid(*[np.arange(number+1) for number in size]),
+        axis=-1
+    ).reshape(-1, 3)[1:]
 
-    return coefficients[1:]
+    idx = np.linalg.norm(coefficients, axis=-1).argsort()
+
+    return coefficients[idx]
 
 def reorder_rows(T):
 
@@ -38,27 +42,24 @@ def get_transformation_matrix(
     ediff = np.inf
     max_size = np.ones(3)
     while ediff > threshold:
-        rationals = [float(Fraction.from_float(x).limit_denominator(int(N))) for x, N in zip(q_vector, max_size)]
+        rationals = [float(Fraction(x).limit_denominator(int(N))) for x, N in zip(q_vector, max_size)]
         ediff = abs(min_energy - exchange._magnon_energies(np.array(rationals).reshape(1, 3)).min())
         max_size += 1
 
-    rationals = [r.as_integer_ratio() for r in rationals]
+    rationals = [Fraction(x).limit_denominator(int(N)).as_integer_ratio() for x, N in zip(q_vector, max_size-1)]
     l, m = zip(*rationals)
     c = lcm(*m)
-    k = [int(l[i]/m[i]*c)%c for i in range(3)]
+    k = np.array([int(l[i]/m[i]*c)%c for i in range(3)])
 
     T = []
-    for n1, n2, n3 in generate_coefficients([x+1 if x else 0 for x in m]):
-        if (n1*k[0] + n2*k[1] + n3*k[2]) % c == 0:
-            if np.linalg.matrix_rank(T + [[n1, n2, n3]]) > len(T):
-                T.append([n1, n2, n3])
+    for coefficients in generate_coefficients(m):
+        if (coefficients @ k) % c == 0:
+            if np.linalg.matrix_rank(T + [coefficients]) > len(T):
+                T.append(coefficients)
         if len(T) == 3:
             break
 
     T = np.array(T)
-    nidx = np.where(T < 0)
-    T[nidx] = np.array(m)[nidx[0]]
-
     T = reorder_rows(T)
 
     return T
