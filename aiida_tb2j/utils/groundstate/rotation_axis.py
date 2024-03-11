@@ -90,10 +90,11 @@ def optimize_rotation_axis(
         w = np.linalg.eigvalsh(H)
         return np.min(w)
 
+    bounds = [(0.0, np.pi), (0.0, 2*np.pi)] if exchange.pbc[-1] else [(np.pi/2, np.pi/2), (0.0, 2*np.pi)]
     minimizer_options = {
         'options': {'maxiter': maxiter},
         'method': method,
-        'bounds': [(0.0, np.pi), (0.0, 2*np.pi)],
+        'bounds': bounds,
     }
 
     def callback_fun(x, f, accepted):
